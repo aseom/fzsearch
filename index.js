@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-const child_process = require('child_process');
+const childProcess  = require('child_process');
+const querystring   = require('querystring');
 const yargs         = require('yargs');
 const request       = require('request');
+const cheerio       = require('cheerio');
 
 // Class
 function Fzf(options) {
@@ -14,7 +16,7 @@ function Fzf(options) {
 
 Fzf.prototype.start = function() {
   var stdout;
-  this.process = child_process
+  this.process = childProcess
     .spawn('fzf', this.options, { stdio: ['pipe', 'pipe', process.stderr] });
   this.process.stdout.on('data', (buffer) => {
     // Get stdout
@@ -30,23 +32,32 @@ Fzf.prototype.start = function() {
       process.exit(1);
     }
   });
-}
+};
 
 Fzf.prototype.printList = function(items) {
   this.process.stdin.write(items.join('\n'));
   this.process.stdin.end();
-}
+};
 
 function getSearchResult(site, query, callback) {
-return [
-    { title: 'one', url: 'http://one.net' },
-    { title: 'two', url: 'http://two.net' }
-  ];
-
-  var url = `https://www.google.com/search?q=${query}`;
+  var url = `https://www.google.com/search?q=${query}&num=30&ie=UTF-8&oe=UTF-8`;
   request(url, (error, response, body) => {
     if (!error && response.statusCode === 200) {
-      callback(body);
+
+      var $ = cheerio.load(body);
+      var result = [];
+      $('.g > .r > a').each((index, element) => {
+        var a = $(element);
+        result.push({
+          title: a.text(),
+          url: querystring.parse(a.attr('href'))['/url?q']
+        });
+      });
+      callback(result);
+
+    } else {
+      var msg = error ? error : response.statusMessage;
+      throw new Error(`Cannot get search result: ${msg}`);
     }
   });
 }
@@ -62,23 +73,19 @@ const argv = yargs
     }
   }).argv;
 
-var fzf = new Fzf(['--no-sort', '--tac', '--prompt=fzsearch> ']);
+var fzf = new Fzf(['--no-sort', '--reverse', '--prompt=fzsearch> ']);
 fzf.start();
 
-var searchResult = getSearchResult();
+getSearchResult('google', argv._.join(' '), (result) => {
+  var titles = [];
+  result.forEach((item, index) => {
+    titles.push(`[${index}] ${item.title}`);
+  });
+  fzf.printList(titles);
 
-var titles = [];
-searchResult.forEach((item, index) => {
-  titles.push(`[${index}] ${item.title}`);
-})
-fzf.printList(titles);
-
-// Now ready to get stdout data.
-fzf.onClose = function(stdout) {
-  var index = stdout.match(/^\[(\d+)\]/)[1];
-  console.log(searchResult[index].url);
-}
-
-//getSearchResult('', 'test', (body) => {
-//  console.log(body);
-//});
+  // Now ready to get stdout data.
+  fzf.onClose = function(stdout) {
+    var index = stdout.match(/^\[(\d+)\]/)[1];
+    console.log(result[index].url);
+  };
+});
