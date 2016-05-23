@@ -7,7 +7,12 @@ const yargs         = require('yargs');
 const request       = require('request');
 const cheerio       = require('cheerio');
 
-// Class
+
+/**
+ * Represents fzf command
+ * @constructor
+ * @param {Object} options - fzf command arguments
+ */
 function Fzf(options) {
   this.options = options;
   this.process = undefined;
@@ -39,13 +44,24 @@ Fzf.prototype.printList = function (items) {
   this.process.stdin.end();
 };
 
-function getSearchResult(options, callback) {
 
+/**
+ * Searcher
+ * @constructor
+ * @param {Object} options - Search options
+ * @param {function()} onResult - Will be executed on result
+ */
+function Search(options, onResult) {
+  this.options = options;
+  this.onResult = onResult;
+}
+
+Search.prototype.google = function () {
   // q=&num=&start=&ie=&oe=
   var queryString = querystring
-    .stringify({ q:     options.query,
-                 num:   options.resultsPerPage,
-                 start: (options.pageNum - 1) * options.resultsPerPage,
+    .stringify({ q:     this.options.query,
+                 num:   this.options.resultsPerPage,
+                 start: (this.options.pageNum - 1) * this.options.resultsPerPage,
                  ie:    'UTF-8',
                  oe:    'UTF-8' });
 
@@ -62,13 +78,21 @@ function getSearchResult(options, callback) {
           url: querystring.parse(a.attr('href'))['/url?q']
         });
       });
-      callback(result);
+      this.onResult(result);
 
     } else {
       var msg = error ? error : response.statusMessage;
       throw new Error(`Cannot get search result: ${msg}`);
     }
   });
+};
+
+
+function getSearchResult(options, onResult) {
+  var search = new Search(options, onResult);
+  switch (options.site) {
+    case 'google': search.google(); break;
+  }
 }
 
 const argv = yargs
