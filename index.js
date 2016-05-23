@@ -14,7 +14,7 @@ function Fzf(options) {
   this.onClose = undefined;
 }
 
-Fzf.prototype.start = function() {
+Fzf.prototype.start = function () {
   var stdout;
   this.process = childProcess
     .spawn('fzf', this.options, { stdio: ['pipe', 'pipe', process.stderr] });
@@ -34,13 +34,22 @@ Fzf.prototype.start = function() {
   });
 };
 
-Fzf.prototype.printList = function(items) {
+Fzf.prototype.printList = function (items) {
   this.process.stdin.write(items.join('\n'));
   this.process.stdin.end();
 };
 
-function getSearchResult(site, query, callback) {
-  var url = `https://www.google.com/search?q=${query}&num=30&ie=UTF-8&oe=UTF-8`;
+function getSearchResult(options, callback) {
+
+  // q=&num=&start=&ie=&oe=
+  var queryString = querystring
+    .stringify({ q:     options.query,
+                 num:   options.resultsPerPage,
+                 start: (options.pageNum - 1) * options.resultsPerPage,
+                 ie:    'UTF-8',
+                 oe:    'UTF-8' });
+
+  var url = 'https://www.google.com/search?' + queryString;
   request(url, (error, response, body) => {
     if (!error && response.statusCode === 200) {
 
@@ -64,28 +73,52 @@ function getSearchResult(site, query, callback) {
 
 const argv = yargs
   .usage('Usage: $0 [options] <query>')
-  .help('h', 'Show this help').alias('h', 'help')
   .options({
-    g: {
-      alias: 'google',
-      desc: 'Use Google as search engine',
-      type: 'boolean'
+    s: {
+      alias: 'site',
+      desc: `Search in Google or Stack Overflow, default is Google
+             Value can be 'google' or 'stack'`,
+      choices: ['google', 'stack']
+    },
+    l: {
+      alias: 'length',
+      desc: 'Set number of results to display, default is 30',
+      type: 'number'
     }
-  }).argv;
+  })
+  .help('h', 'Show this help')
+  .alias('h', 'help')
+  .example("$0 -s google -n 50 'Node.js'", "  Search 'Node.js' in Google")
+  .argv;
 
-var fzf = new Fzf(['--no-sort', '--reverse', '--prompt=fzsearch> ']);
-fzf.start();
+const searchOptions = {
+  query:          argv._.join(' '),
+  site:           argv.s || 'google',
+  resultsPerPage: argv.l || 30,
+  pageNum:        1
+};
 
-getSearchResult('google', argv._.join(' '), (result) => {
-  var titles = [];
-  result.forEach((item, index) => {
-    titles.push(`[${index}] ${item.title}`);
+(function fzsearch() {
+  var fzf = new Fzf(['--no-sort', '--reverse', '--prompt=fzsearch> ']);
+  fzf.start();
+
+  getSearchResult(searchOptions, (result) => {
+    var titles = [];
+    titles.push('>>> Show next page');
+    result.forEach((item, index) => {
+      titles.push(`[${index}] ${item.title}`);
+    });
+    fzf.printList(titles);
+
+    // Now ready to get stdout data.
+    fzf.onClose = function (stdout) {
+      if (stdout.match(/^>>>/)) {
+        searchOptions.pageNum += 1;
+        fzsearch();
+      } else {
+        var index = stdout.match(/^\[(\d+)\]/)[1];
+        console.log(result[index].url);
+      }
+    };
   });
-  fzf.printList(titles);
-
-  // Now ready to get stdout data.
-  fzf.onClose = function(stdout) {
-    var index = stdout.match(/^\[(\d+)\]/)[1];
-    console.log(result[index].url);
-  };
-});
+})();
