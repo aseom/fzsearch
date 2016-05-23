@@ -49,7 +49,7 @@ Fzf.prototype.printList = function (items) {
  * Searcher
  * @constructor
  * @param {Object} options - Search options
- * @param {function()} onResult - Will be executed on result
+ * @param {function} onResult - Will be executed on result
  */
 function Search(options, onResult) {
   this.options = options;
