@@ -87,13 +87,36 @@ Search.prototype.google = function () {
   });
 };
 
+Search.prototype.stackrOverflow = function () {
+  // q=&page=&pagesize=
+  var queryString = querystring
+    .stringify({ q:        this.options.query,
+                 page:     this.options.pageNum,
+                 pagesize: this.options.resultsPerPage });
 
-function getSearchResult(options, onResult) {
-  var search = new Search(options, onResult);
-  switch (options.site) {
-    case 'google': search.google(); break;
-  }
-}
+  var url = 'http://stackoverflow.com/search?' + queryString;
+  request(url, (error, response, body) => {
+    if (!error && response.statusCode === 200) {
+
+      var $ = cheerio.load(body);
+      var result = [];
+      $('.search-result > .summary').each((index, element) => {
+        var summary = $(element);
+        var a = summary.find('.result-link a');
+        result.push({
+          title: a.attr('title'),
+          url: 'http://stackoverflow.com' + a.attr('href')
+        });
+      });
+      this.onResult(result);
+
+    } else {
+      var msg = error ? error : response.statusMessage;
+      throw new Error(`Cannot get search result: ${msg}`);
+    }
+  });
+};
+
 
 const argv = yargs
   .usage('Usage: $0 [options] <query>')
@@ -122,11 +145,19 @@ const searchOptions = {
   pageNum:        1
 };
 
+function doSearch(options, onResult) {
+  var search = new Search(options, onResult);
+  switch (options.site) {
+    case 'google': search.google();         break;
+    case 'stack':  search.stackrOverflow(); break;
+  }
+}
+
 (function fzsearch() {
   var fzf = new Fzf(['--no-sort', '--reverse', '--prompt=fzsearch> ']);
   fzf.start();
 
-  getSearchResult(searchOptions, (result) => {
+  doSearch(searchOptions, (result) => {
     var titles = [];
     titles.push('>>> Show next page');
     result.forEach((item, index) => {
