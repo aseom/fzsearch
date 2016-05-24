@@ -57,16 +57,16 @@ function Search(options, onResult) {
 }
 
 Search.prototype.google = function () {
-  // q=&num=&start=&ie=&oe=
-  var queryString = querystring
-    .stringify({ q:     this.options.query,
-                 num:   this.options.resultsPerPage,
-                 start: (this.options.pageNum - 1) * this.options.resultsPerPage,
-                 ie:    'UTF-8',
-                 oe:    'UTF-8' });
 
-  var url = 'https://www.google.com/search?' + queryString;
-  request(url, (error, response, body) => {
+  var url = 'https://www.google.com/search';
+  var qs  = {
+    q:     this.options.query,
+    num:   this.options.resultsPerPage,
+    start: (this.options.pageNum - 1) * this.options.resultsPerPage,
+    ie:    'UTF-8',
+    oe:    'UTF-8'
+  };
+  request({ url, qs }, (error, response, body) => {
     if (!error && response.statusCode === 200) {
 
       var $ = cheerio.load(body);
@@ -88,24 +88,23 @@ Search.prototype.google = function () {
 };
 
 Search.prototype.stackrOverflow = function () {
-  // q=&page=&pagesize=
-  var queryString = querystring
-    .stringify({ q:        this.options.query,
-                 page:     this.options.pageNum,
-                 pagesize: this.options.resultsPerPage });
 
-  var url = 'http://stackoverflow.com/search?' + queryString;
-  request(url, (error, response, body) => {
+  var url = 'https://api.stackexchange.com/2.2/search/excerpts';
+  var qs  = {
+    q:        this.options.query,
+    page:     this.options.pageNum,
+    pagesize: this.options.resultsPerPage,
+    sort:     'relevance',
+    site:     'stackoverflow'
+  };
+  request({ url, qs, json: true, gzip: true }, (error, response, body) => {
     if (!error && response.statusCode === 200) {
 
-      var $ = cheerio.load(body);
       var result = [];
-      $('.search-result > .summary').each((index, element) => {
-        var summary = $(element);
-        var a = summary.find('.result-link a');
+      body.items.forEach((item) => {
         result.push({
-          title: a.attr('title'),
-          url: 'http://stackoverflow.com' + a.attr('href')
+          title: item.title,
+          url: 'http://stackoverflow.com/questions/' + item.question_id
         });
       });
       this.onResult(result);
