@@ -3,6 +3,9 @@
 
 const childProcess  = require('child_process');
 const querystring   = require('querystring');
+const EventEmitter  = require('events');
+const inherits      = require('util').inherits;
+
 const yargs         = require('yargs');
 const request       = require('request');
 const cheerio       = require('cheerio');
@@ -11,13 +14,16 @@ const cheerio       = require('cheerio');
 /**
  * Represents fzf command
  * @constructor
+ * @extends EventEmitter
  * @param {Object} options - fzf command arguments
  */
 function Fzf(options) {
+  EventEmitter.call(this);
+
   this.options = options;
   this.process = undefined;
-  this.onClose = undefined;
 }
+inherits(Fzf, EventEmitter);
 
 Fzf.prototype.start = function () {
   var stdout;
@@ -28,13 +34,11 @@ Fzf.prototype.start = function () {
     stdout = buffer.toString();
   });
   this.process.on('close', (code) => {
-    // fzf close without error, stdout exists,
-    // And if onClose function exists, call it.
-    if (code === 0 && stdout && this.onClose) {
-      this.onClose(stdout);
+    if (code === 0) {
+      this.emit('end', stdout);
     } else {
-      // If fzf closed too early
-      process.exit(1);
+      // Exit main process
+      process.exit(code);
     }
   });
 };
@@ -48,13 +52,15 @@ Fzf.prototype.printList = function (items) {
 /**
  * Searcher
  * @constructor
+ * @extends EventEmitter
  * @param {Object} options - Search options
- * @param {function} onResult - Will be executed on result
  */
-function Search(options, onResult) {
+function Search(options) {
+  EventEmitter.call(this);
+
   this.options = options;
-  this.onResult = onResult;
 }
+inherits(Search, EventEmitter);
 
 Search.prototype.google = function () {
 
@@ -78,7 +84,7 @@ Search.prototype.google = function () {
           url: querystring.parse(a.attr('href'))['/url?q']
         });
       });
-      this.onResult(result);
+      this.emit('result', result);
 
     } else {
       var msg = error ? error : response.statusMessage;
@@ -107,7 +113,7 @@ Search.prototype.stackrOverflow = function () {
           url: 'http://stackoverflow.com/questions/' + item.question_id
         });
       });
-      this.onResult(result);
+      this.emit('result', result);
 
     } else {
       var msg = error ? error : response.statusMessage;
@@ -144,19 +150,17 @@ const searchOptions = {
   pageNum:        1
 };
 
-function doSearch(options, onResult) {
-  var search = new Search(options, onResult);
-  switch (options.site) {
-    case 'google': search.google();         break;
-    case 'stack':  search.stackrOverflow(); break;
-  }
-}
-
 (function fzsearch() {
   var fzf = new Fzf(['--no-sort', '--reverse', '--prompt=fzsearch> ']);
   fzf.start();
 
-  doSearch(searchOptions, (result) => {
+  var search = new Search(searchOptions);
+  switch (searchOptions.site) {
+    case 'google': search.google();         break;
+    case 'stack':  search.stackrOverflow(); break;
+  }
+
+  search.on('result', (result) => {
     var titles = [];
     titles.push('>>> Show next page');
     result.forEach((item, index) => {
@@ -164,8 +168,7 @@ function doSearch(options, onResult) {
     });
     fzf.printList(titles);
 
-    // Now ready to get stdout data.
-    fzf.onClose = function (stdout) {
+    fzf.on('end', (stdout) => {
       if (stdout.match(/^>>>/)) {
         searchOptions.pageNum += 1;
         fzsearch();
@@ -173,6 +176,6 @@ function doSearch(options, onResult) {
         var index = stdout.match(/^\[(\d+)\]/)[1];
         console.log(result[index].url);
       }
-    };
+    });
   });
 })();
