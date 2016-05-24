@@ -151,7 +151,8 @@ const searchOptions = {
 };
 
 (function fzsearch() {
-  var fzf = new Fzf(['--no-sort', '--reverse', '--prompt=fzsearch> ']);
+  var fzf = new Fzf(['--no-sort', '--reverse',
+                     '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
   fzf.start();
 
   var search = new Search(searchOptions);
@@ -162,19 +163,30 @@ const searchOptions = {
 
   search.on('result', (result) => {
     var titles = [];
-    titles.push('>>> Show next page');
     result.forEach((item, index) => {
       titles.push(`[${index}] ${item.title}`);
     });
     fzf.printList(titles);
 
     fzf.on('end', (stdout) => {
-      if (stdout.match(/^>>>/)) {
-        searchOptions.pageNum += 1;
-        fzsearch();
-      } else {
-        var index = stdout.match(/^\[(\d+)\]/)[1];
-        console.log(result[index].url);
+      stdout = stdout.split('\n');
+      const keyInput     = stdout[0];
+      const selectedItem = stdout[1];
+
+      switch (keyInput) {
+        // Next page
+        case 'ctrl-n':
+          searchOptions.pageNum += 1;
+          fzsearch(); break;
+
+        // Previous page
+        case 'ctrl-p':
+          if (searchOptions.pageNum > 1) searchOptions.pageNum -= 1;
+          fzsearch(); break;
+
+        default:
+          var index = selectedItem.match(/^\[(\d+)\]/)[1];
+          console.log(result[index].url);
       }
     });
   });
