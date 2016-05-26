@@ -52,15 +52,20 @@ Fzf.prototype.printList = function (items) {
 /**
  * Searcher
  * @constructor
- * @extends EventEmitter
  * @param {Object} options - Search options
  */
 function Search(options) {
-  EventEmitter.call(this);
-
   this.options = options;
 }
-inherits(Search, EventEmitter);
+
+Search.prototype.getResult = function () {
+  let promise;
+  switch (this.options.site) {
+    case 'google': promise = this.google();         break;
+    case 'stack':  promise = this.stackrOverflow(); break;
+  }
+  return promise;
+};
 
 Search.prototype.google = function () {
 
@@ -72,24 +77,29 @@ Search.prototype.google = function () {
     ie:    'UTF-8',
     oe:    'UTF-8'
   };
-  request({ url, qs }, (error, response, body) => {
-    if (!error && response.statusCode === 200) {
 
-      const $ = cheerio.load(body);
-      const result = [];
-      $('.g > .r > a').each((index, element) => {
-        const a = $(element);
-        result.push({
-          title: a.text(),
-          url: querystring.parse(a.attr('href'))['/url?q']
+  return new Promise((resolve, reject) => {
+    request({ url, qs }, (error, response, body) => {
+      if (!error && response.statusCode === 200) {
+
+        const $ = cheerio.load(body);
+        const result = [];
+        $('.g > .r > a').each((index, element) => {
+          const a = $(element);
+          result.push({
+            title: a.text(),
+            url: querystring.parse(a.attr('href'))['/url?q']
+          });
         });
-      });
-      this.emit('result', result);
+        resolve(result);
 
-    } else {
-      const msg = error || response.statusMessage;
-      throw new Error(`Cannot get search result: ${msg}`);
-    }
+      } else {
+        const msg = error
+          ? error.message
+          : response.statusCode + ' ' + response.statusMessage;
+        reject(new Error(`Cannot get search result: ${msg}`));
+      }
+    });
   });
 };
 
@@ -103,22 +113,27 @@ Search.prototype.stackrOverflow = function () {
     sort:     'relevance',
     site:     'stackoverflow'
   };
-  request({ url, qs, json: true, gzip: true }, (error, response, body) => {
-    if (!error && response.statusCode === 200) {
 
-      const result = [];
-      body.items.forEach((item) => {
-        result.push({
-          title: item.title,
-          url: 'http://stackoverflow.com/questions/' + item.question_id
+  return new Promise((resolve, reject) => {
+    request({ url, qs, json: true, gzip: true }, (error, response, body) => {
+      if (!error && response.statusCode === 200) {
+
+        const result = [];
+        body.items.forEach((item) => {
+          result.push({
+            title: item.title,
+            url: 'http://stackoverflow.com/questions/' + item.question_id
+          });
         });
-      });
-      this.emit('result', result);
+        resolve(result);
 
-    } else {
-      const msg = error || response.statusMessage;
-      throw new Error(`Cannot get search result: ${msg}`);
-    }
+      } else {
+        const msg = error
+          ? error.message
+          : response.statusCode + ' ' + response.statusMessage;
+        reject(new Error(`Cannot get search result: ${msg}`));
+      }
+    });
   });
 };
 
@@ -156,12 +171,8 @@ const searchOptions = {
   fzf.start();
 
   const search = new Search(searchOptions);
-  switch (searchOptions.site) {
-    case 'google': search.google();         break;
-    case 'stack':  search.stackrOverflow(); break;
-  }
-
-  search.on('result', (result) => {
+  search.getResult().then((result) => {
+    // Resolve
     const titles = [];
     result.forEach((item, index) => {
       titles.push(`[${index}] ${item.title}`);
@@ -189,5 +200,9 @@ const searchOptions = {
           console.log(result[index].url);
       }
     });
+  }, (error) => {
+    // Reject
+    fzf.process.kill();
+    console.error(error);
   });
 })();
