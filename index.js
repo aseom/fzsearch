@@ -26,7 +26,7 @@ function Fzf(options) {
 inherits(Fzf, EventEmitter);
 
 Fzf.prototype.start = function () {
-  var stdout;
+  let stdout;
   this.process = childProcess
     .spawn('fzf', this.options, { stdio: ['pipe', 'pipe', process.stderr] });
   this.process.stdout.on('data', (buffer) => {
@@ -64,8 +64,8 @@ inherits(Search, EventEmitter);
 
 Search.prototype.google = function () {
 
-  var url = 'https://www.google.com/search';
-  var qs  = {
+  const url = 'https://www.google.com/search';
+  const qs  = {
     q:     this.options.query,
     num:   this.options.resultsPerPage,
     start: (this.options.pageNum - 1) * this.options.resultsPerPage,
@@ -75,10 +75,10 @@ Search.prototype.google = function () {
   request({ url, qs }, (error, response, body) => {
     if (!error && response.statusCode === 200) {
 
-      var $ = cheerio.load(body);
-      var result = [];
+      const $ = cheerio.load(body);
+      const result = [];
       $('.g > .r > a').each((index, element) => {
-        var a = $(element);
+        const a = $(element);
         result.push({
           title: a.text(),
           url: querystring.parse(a.attr('href'))['/url?q']
@@ -87,7 +87,7 @@ Search.prototype.google = function () {
       this.emit('result', result);
 
     } else {
-      var msg = error ? error : response.statusMessage;
+      const msg = error || response.statusMessage;
       throw new Error(`Cannot get search result: ${msg}`);
     }
   });
@@ -95,8 +95,8 @@ Search.prototype.google = function () {
 
 Search.prototype.stackrOverflow = function () {
 
-  var url = 'https://api.stackexchange.com/2.2/search/excerpts';
-  var qs  = {
+  const url = 'https://api.stackexchange.com/2.2/search/excerpts';
+  const qs  = {
     q:        this.options.query,
     page:     this.options.pageNum,
     pagesize: this.options.resultsPerPage,
@@ -106,7 +106,7 @@ Search.prototype.stackrOverflow = function () {
   request({ url, qs, json: true, gzip: true }, (error, response, body) => {
     if (!error && response.statusCode === 200) {
 
-      var result = [];
+      const result = [];
       body.items.forEach((item) => {
         result.push({
           title: item.title,
@@ -116,7 +116,7 @@ Search.prototype.stackrOverflow = function () {
       this.emit('result', result);
 
     } else {
-      var msg = error ? error : response.statusMessage;
+      const msg = error || response.statusMessage;
       throw new Error(`Cannot get search result: ${msg}`);
     }
   });
@@ -151,18 +151,18 @@ const searchOptions = {
 };
 
 (function fzsearch() {
-  var fzf = new Fzf(['--no-sort', '--reverse',
-                     '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
+  const fzf = new Fzf(['--no-sort', '--reverse',
+                       '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
   fzf.start();
 
-  var search = new Search(searchOptions);
+  const search = new Search(searchOptions);
   switch (searchOptions.site) {
     case 'google': search.google();         break;
     case 'stack':  search.stackrOverflow(); break;
   }
 
   search.on('result', (result) => {
-    var titles = [];
+    const titles = [];
     result.forEach((item, index) => {
       titles.push(`[${index}] ${item.title}`);
     });
