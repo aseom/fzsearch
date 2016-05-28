@@ -34,7 +34,7 @@ Fzf.prototype.start = function () {
     stdout = buffer.toString();
   });
   this.process.on('close', (code) => {
-    if (code === 0) {
+    if (stdout) {
       this.emit('end', stdout);
     } else {
       // Exit main process
@@ -52,13 +52,13 @@ Fzf.prototype.printList = function (items) {
 /**
  * Searcher
  * @constructor
- * @param {Object} options - Search options
  */
-function Search(options) {
-  this.options = options;
+function Search() {
+  this.options = undefined;
+  this.result  = undefined;
 }
 
-Search.prototype.getResult = function () {
+Search.prototype.asyncRun = function () {
   let promise;
   switch (this.options.site) {
     case 'google': promise = this.google();         break;
@@ -91,7 +91,8 @@ Search.prototype.google = function () {
             url: querystring.parse(a.attr('href'))['/url?q']
           });
         });
-        resolve(result);
+        this.result = result;
+        resolve();
 
       } else {
         const msg = error
@@ -125,7 +126,8 @@ Search.prototype.stackrOverflow = function () {
             url: 'http://stackoverflow.com/questions/' + item.question_id
           });
         });
-        resolve(result);
+        this.result = result;
+        resolve();
 
       } else {
         const msg = error
@@ -158,51 +160,51 @@ const argv = yargs
   .example("$0 -s google -n 50 'Node.js'", "  Search 'Node.js' in Google")
   .argv;
 
-const searchOptions = {
+const search = new Search();
+search.options = {
   query:          argv._.join(' '),
   site:           argv.s || 'google',
   resultsPerPage: argv.l || 30,
   pageNum:        1
 };
 
-(function fzsearch() {
+function fzfInterface() {
   const fzf = new Fzf(['--no-sort', '--reverse',
                        '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
   fzf.start();
 
-  const search = new Search(searchOptions);
-  search.getResult().then((result) => {
+  search.asyncRun().then(() => {
     // Resolve
     const titles = [];
-    result.forEach((item, index) => {
+    search.result.forEach((item, index) => {
       titles.push(`[${index}] ${item.title}`);
     });
     fzf.printList(titles);
-
-    fzf.on('end', (stdout) => {
-      stdout = stdout.split('\n');
-      const keyInput     = stdout[0];
-      const selectedItem = stdout[1];
-
-      switch (keyInput) {
-        // Next page
-        case 'ctrl-n':
-          searchOptions.pageNum += 1;
-          fzsearch(); break;
-
-        // Previous page
-        case 'ctrl-p':
-          if (searchOptions.pageNum > 1) searchOptions.pageNum -= 1;
-          fzsearch(); break;
-
-        default:
-          var index = selectedItem.match(/^\[(\d+)\]/)[1];
-          console.log(result[index].url);
-      }
-    });
   }, (error) => {
     // Reject
     fzf.process.kill();
     console.error(error);
   });
-})();
+
+  return new Promise((resolve) => {
+    fzf.on('end', resolve);
+  }).then((stdout) => {
+    stdout = stdout.split('\n');
+    const result = { keyInput: stdout[0], selectedItem: stdout[1] };
+
+    switch (result.keyInput) {
+      case 'ctrl-n':
+        search.options.pageNum += 1;
+        return fzfInterface();
+      case 'ctrl-p':
+        if (search.options.pageNum > 1) search.options.pageNum -= 1;
+        return fzfInterface();
+    }
+    return result;
+  });
+}
+
+fzfInterface().then((result) => {
+  var index = result.selectedItem.match(/^\[(\d+)\]/)[1];
+  console.log(search.result[index].url);
+});
