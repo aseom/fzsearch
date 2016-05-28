@@ -34,13 +34,12 @@ Fzf.prototype.start = function () {
     stdout = buffer.toString();
   });
   this.process.on('close', (code) => {
-    if (stdout) {
-      this.emit('end', stdout);
-    } else {
-      // Exit main process
-      process.exit(code);
-    }
+    this.emit('exit', code, stdout);
   });
+};
+
+Fzf.prototype.kill = function () {
+  this.process.kill();
 };
 
 Fzf.prototype.printList = function (items) {
@@ -173,38 +172,46 @@ function fzfInterface() {
                        '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
   fzf.start();
 
-  search.asyncRun().then(() => {
-    // Resolve
-    const titles = [];
-    search.result.forEach((item, index) => {
-      titles.push(`[${index}] ${item.title}`);
+  search.asyncRun()
+    .catch((error) => {
+      fzf.kill();
+      console.error(error);
+    })
+    .then(() => {
+      const titles = [];
+      search.result.forEach((item, index) => {
+        titles.push(`[${index}] ${item.title}`);
+      });
+      fzf.printList(titles);
     });
-    fzf.printList(titles);
-  }, (error) => {
-    // Reject
-    fzf.process.kill();
-    console.error(error);
-  });
 
-  return new Promise((resolve) => {
-    fzf.on('end', resolve);
-  }).then((stdout) => {
-    stdout = stdout.split('\n');
-    const result = { keyInput: stdout[0], selectedItem: stdout[1] };
+  return new Promise((resolve, reject) => {
+    fzf.on('exit', (_, stdout) => {
+      stdout ? resolve(stdout) : reject();
+    });
+  })
+    .then((stdout) => {
+      stdout = stdout.split('\n');
+      const result = { keyInput: stdout[0], selectedItem: stdout[1] };
 
-    switch (result.keyInput) {
-      case 'ctrl-n':
-        search.options.pageNum += 1;
-        return fzfInterface();
-      case 'ctrl-p':
-        if (search.options.pageNum > 1) search.options.pageNum -= 1;
-        return fzfInterface();
-    }
-    return result;
-  });
+      switch (result.keyInput) {
+        case 'ctrl-n':
+          search.options.pageNum += 1;
+          return fzfInterface();
+        case 'ctrl-p':
+          if (search.options.pageNum > 1) search.options.pageNum -= 1;
+          return fzfInterface();
+      }
+      return result;
+    });
 }
 
-fzfInterface().then((result) => {
-  var index = result.selectedItem.match(/^\[(\d+)\]/)[1];
-  console.log(search.result[index].url);
-});
+fzfInterface()
+  .catch(() => {
+    // fzf exited with empty stdout
+    process.exit(1);
+  })
+  .then((result) => {
+    var index = result.selectedItem.match(/^\[(\d+)\]/)[1];
+    console.log(search.result[index].url);
+  });
