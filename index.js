@@ -42,8 +42,11 @@ Fzf.prototype.kill = function () {
   this.process.kill();
 };
 
-Fzf.prototype.printList = function (items) {
-  this.process.stdin.write(items.join('\n'));
+Fzf.prototype.stdinWrite = function (string) {
+  this.process.stdin.write(string + '\n');
+};
+
+Fzf.prototype.stdinClose = function () {
   this.process.stdin.end();
 };
 
@@ -58,6 +61,7 @@ function Search() {
 }
 
 Search.prototype.asyncRun = function () {
+  this.result = [];
   let promise;
   switch (this.options.site) {
     case 'google': promise = this.google();         break;
@@ -82,15 +86,13 @@ Search.prototype.google = function () {
       if (!error && response.statusCode === 200) {
 
         const $ = cheerio.load(body);
-        const result = [];
         $('.g > .r > a').each((index, element) => {
           const a = $(element);
-          result.push({
+          this.result.push({
             title: a.text(),
             url: querystring.parse(a.attr('href'))['/url?q']
           });
         });
-        this.result = result;
         resolve();
 
       } else {
@@ -118,14 +120,12 @@ Search.prototype.stackrOverflow = function () {
     request({ url, qs, json: true, gzip: true }, (error, response, body) => {
       if (!error && response.statusCode === 200) {
 
-        const result = [];
         body.items.forEach((item) => {
-          result.push({
+          this.result.push({
             title: item.title,
             url: 'http://stackoverflow.com/questions/' + item.question_id
           });
         });
-        this.result = result;
         resolve();
 
       } else {
@@ -178,11 +178,10 @@ function fzfInterface() {
       console.error(error);
     })
     .then(() => {
-      const titles = [];
       search.result.forEach((item, index) => {
-        titles.push(`[${index}] ${item.title}`);
+        fzf.stdinWrite(`[${index}] ${item.title}`);
       });
-      fzf.printList(titles);
+      fzf.stdinClose();
     });
 
   return new Promise((resolve, reject) => {
