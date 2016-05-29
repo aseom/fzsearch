@@ -57,43 +57,47 @@ Fzf.prototype.stdinClose = function () {
  */
 function Search() {
   this.options = undefined;
-  this.result  = undefined;
+  this.savedResults = [];
 }
 
-Search.prototype.asyncRun = function () {
-  this.result = [];
+Search.prototype.asyncGetResult = function (pageNum) {
   let promise;
   switch (this.options.site) {
-    case 'google': promise = this.google();         break;
-    case 'stack':  promise = this.stackrOverflow(); break;
+    case 'google': promise = this.google(pageNum);         break;
+    case 'stack':  promise = this.stackrOverflow(pageNum); break;
   }
   return promise;
 };
 
-Search.prototype.google = function () {
+Search.prototype.google = function (pageNum) {
 
   const url = 'https://www.google.com/search';
   const qs  = {
     q:     this.options.query,
     num:   this.options.resultsPerPage,
-    start: (this.options.pageNum - 1) * this.options.resultsPerPage,
+    start: (pageNum - 1) * this.options.resultsPerPage,
     ie:    'UTF-8',
     oe:    'UTF-8'
   };
 
   return new Promise((resolve, reject) => {
+    // Use saved result if exists
+    if (this.savedResults[pageNum]) resolve(this.savedResults[pageNum]);
+
     request({ url, qs }, (error, response, body) => {
       if (!error && response.statusCode === 200) {
 
+        const resultForPage = [];
         const $ = cheerio.load(body);
         $('.g > .r > a').each((index, element) => {
           const a = $(element);
-          this.result.push({
+          resultForPage.push({
             title: a.text(),
             url: querystring.parse(a.attr('href'))['/url?q']
           });
         });
-        resolve();
+        this.savedResults[pageNum] = resultForPage;
+        resolve(resultForPage);
 
       } else {
         const msg = error
@@ -105,28 +109,32 @@ Search.prototype.google = function () {
   });
 };
 
-Search.prototype.stackrOverflow = function () {
+Search.prototype.stackrOverflow = function (pageNum) {
 
   const url = 'https://api.stackexchange.com/2.2/search/excerpts';
   const qs  = {
     q:        this.options.query,
-    page:     this.options.pageNum,
+    page:     pageNum,
     pagesize: this.options.resultsPerPage,
     sort:     'relevance',
     site:     'stackoverflow'
   };
 
   return new Promise((resolve, reject) => {
+    if (this.savedResults[pageNum]) resolve(this.savedResults[pageNum]);
+
     request({ url, qs, json: true, gzip: true }, (error, response, body) => {
       if (!error && response.statusCode === 200) {
 
+        const resultForPage = [];
         body.items.forEach((item) => {
-          this.result.push({
+          resultForPage.push({
             title: item.title,
             url: 'http://stackoverflow.com/questions/' + item.question_id
           });
         });
-        resolve();
+        this.savedResults[pageNum] = resultForPage;
+        resolve(resultForPage);
 
       } else {
         const msg = error
@@ -163,22 +171,23 @@ const search = new Search();
 search.options = {
   query:          argv._.join(' '),
   site:           argv.s || 'google',
-  resultsPerPage: argv.l || 30,
-  pageNum:        1
+  resultsPerPage: argv.l || 30
 };
+
+let currentPageNum = 1;
 
 function fzfInterface() {
   const fzf = new Fzf(['--no-sort', '--reverse',
                        '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
   fzf.start();
 
-  search.asyncRun()
+  search.asyncGetResult(currentPageNum)
     .catch((error) => {
       fzf.kill();
       console.error(error);
     })
-    .then(() => {
-      search.result.forEach((item, index) => {
+    .then((result) => {
+      result.forEach((item, index) => {
         fzf.stdinWrite(`[${index}] ${item.title}`);
       });
       fzf.stdinClose();
@@ -191,17 +200,17 @@ function fzfInterface() {
   })
     .then((stdout) => {
       stdout = stdout.split('\n');
-      const result = { keyInput: stdout[0], selectedItem: stdout[1] };
+      const resolvedStdout = { keyInput: stdout[0], selectedItem: stdout[1] };
 
-      switch (result.keyInput) {
+      switch (resolvedStdout.keyInput) {
         case 'ctrl-n':
-          search.options.pageNum += 1;
+          currentPageNum += 1;
           return fzfInterface();
         case 'ctrl-p':
-          if (search.options.pageNum > 1) search.options.pageNum -= 1;
+          if (currentPageNum > 1) currentPageNum -= 1;
           return fzfInterface();
       }
-      return result;
+      return resolvedStdout;
     });
 }
 
@@ -210,7 +219,8 @@ fzfInterface()
     // fzf exited with empty stdout
     process.exit(1);
   })
-  .then((result) => {
-    var index = result.selectedItem.match(/^\[(\d+)\]/)[1];
-    console.log(search.result[index].url);
+  .then((resolvedStdout) => {
+    const searchResult = search.savedResults[currentPageNum];
+    const index = resolvedStdout.selectedItem.match(/^\[(\d+)\]/)[1];
+    console.log(searchResult[index].url);
   });
