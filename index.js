@@ -19,71 +19,73 @@ const cheerio       = require('cheerio');
  */
 function Fzf(options) {
   EventEmitter.call(this);
-
   this.options = options;
-  this.process = undefined;
 }
 inherits(Fzf, EventEmitter);
 
 Fzf.prototype.start = function () {
   let stdout;
-  this.process = childProcess
+  this._process = childProcess
     .spawn('fzf', this.options, { stdio: ['pipe', 'pipe', process.stderr] });
-  this.process.stdout.on('data', (buffer) => {
+  this._process.stdout.on('data', (buffer) => {
     // Get stdout
     stdout = buffer.toString();
   });
-  this.process.on('close', (code) => {
+  this._process.on('close', (code) => {
     this.emit('exit', code, stdout);
   });
 };
 
 Fzf.prototype.kill = function () {
-  this.process.kill();
+  this._process.kill();
 };
 
 Fzf.prototype.stdinWrite = function (string) {
-  this.process.stdin.write(string + '\n');
+  this._process.stdin.write(string + '\n');
 };
 
 Fzf.prototype.stdinClose = function () {
-  this.process.stdin.end();
+  this._process.stdin.end();
 };
 
 
 /**
  * Searcher
  * @constructor
+ * @param {Object} options - Search options
  */
-function Search() {
-  this.options = undefined;
-  this.savedResults = [];
+function Search(options) {
+  this.options = options;
 }
 
-Search.prototype.asyncGetResult = function (pageNum) {
+Search.savedResults = [];
+
+Search.prototype.asyncRun = function () {
   let promise;
   switch (this.options.site) {
-    case 'google': promise = this.google(pageNum);         break;
-    case 'stack':  promise = this.stackrOverflow(pageNum); break;
+    case 'google': promise = this._google();         break;
+    case 'stack':  promise = this._stackrOverflow(); break;
   }
   return promise;
 };
 
-Search.prototype.google = function (pageNum) {
+Search.prototype._google = function () {
 
   const url = 'https://www.google.com/search';
   const qs  = {
     q:     this.options.query,
     num:   this.options.resultsPerPage,
-    start: (pageNum - 1) * this.options.resultsPerPage,
+    start: (this.options.pageNum - 1) * this.options.resultsPerPage,
     ie:    'UTF-8',
     oe:    'UTF-8'
   };
 
   return new Promise((resolve, reject) => {
     // Use saved result if exists
-    if (this.savedResults[pageNum]) resolve(this.savedResults[pageNum]);
-
+    if (this.constructor.savedResults[this.options.pageNum]) {
+      resolve(this.constructor.savedResults[this.options.pageNum]);
+      return;
+    }
     request({ url, qs }, (error, response, body) => {
       if (!error && response.statusCode === 200) {
 
@@ -96,7 +98,7 @@ Search.prototype.google = function (pageNum) {
             url: querystring.parse(a.attr('href'))['/url?q']
           });
         });
-        this.savedResults[pageNum] = resultForPage;
+        this.constructor.savedResults[this.options.pageNum] = resultForPage;
         resolve(resultForPage);
 
       } else {
@@ -109,20 +111,22 @@ Search.prototype.google = function (pageNum) {
   });
 };
 
-Search.prototype.stackrOverflow = function (pageNum) {
+Search.prototype._stackrOverflow = function () {
 
   const url = 'https://api.stackexchange.com/2.2/search/excerpts';
   const qs  = {
     q:        this.options.query,
-    page:     pageNum,
+    page:     this.options.pageNum,
     pagesize: this.options.resultsPerPage,
     sort:     'relevance',
     site:     'stackoverflow'
   };
 
   return new Promise((resolve, reject) => {
-    if (this.savedResults[pageNum]) resolve(this.savedResults[pageNum]);
-
+    if (this.constructor.savedResults[this.options.pageNum]) {
+      resolve(this.constructor.savedResults[this.options.pageNum]);
+      return;
+    }
     request({ url, qs, json: true, gzip: true }, (error, response, body) => {
       if (!error && response.statusCode === 200) {
 
@@ -133,7 +137,7 @@ Search.prototype.stackrOverflow = function (pageNum) {
             url: 'http://stackoverflow.com/questions/' + item.question_id
           });
         });
-        this.savedResults[pageNum] = resultForPage;
+        this.constructor.savedResults[this.options.pageNum] = resultForPage;
         resolve(resultForPage);
 
       } else {
@@ -143,6 +147,59 @@ Search.prototype.stackrOverflow = function (pageNum) {
         reject(new Error(`Cannot get search result: ${msg}`));
       }
     });
+  });
+};
+
+
+function Fzsearch(argv) {
+  this.options = {
+    query:          argv._.join(' '),
+    site:           argv.s || 'google',
+    pageNum:        1,
+    resultsPerPage: argv.l || 30
+  };
+
+  this.run();
+}
+
+Fzsearch.prototype.run = function () {
+  const fzf = new Fzf(['--no-sort', '--reverse',
+                       '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
+  const searcher = new Search(this.options);
+
+  fzf.start();
+  searcher.asyncRun()
+    .catch((error) => {
+      fzf.kill();
+      console.error(error);
+    })
+    .then((result) => {
+      result.forEach((item, index) => {
+        fzf.stdinWrite(`[${index}] ${item.title}`);
+      });
+      fzf.stdinClose();
+    });
+
+  fzf.on('exit', (_, stdout) => {
+    if (!stdout) process.exit(1);
+
+    stdout = stdout.split('\n');
+    const keyInput       = stdout[0];
+    const selectedString = stdout[1];
+
+    switch (keyInput) {
+      case 'ctrl-n':
+        this.options.pageNum++;
+        this.run(); return;
+      case 'ctrl-p':
+        if (this.options.pageNum > 1) this.options.pageNum--;
+        this.run(); return;
+      default: {
+        const searchResult = Search.savedResults[this.options.pageNum];
+        const index = selectedString.match(/^\[(\d+)\]/)[1];
+        console.log(searchResult[index]); return;
+      }
+    }
   });
 };
 
@@ -167,60 +224,4 @@ const argv = yargs
   .example("$0 -s google -n 50 'Node.js'", "  Search 'Node.js' in Google")
   .argv;
 
-const search = new Search();
-search.options = {
-  query:          argv._.join(' '),
-  site:           argv.s || 'google',
-  resultsPerPage: argv.l || 30
-};
-
-let currentPageNum = 1;
-
-function fzfInterface() {
-  const fzf = new Fzf(['--no-sort', '--reverse',
-                       '--expect=ctrl-n,ctrl-p', '--prompt=fzsearch> ']);
-  fzf.start();
-
-  search.asyncGetResult(currentPageNum)
-    .catch((error) => {
-      fzf.kill();
-      console.error(error);
-    })
-    .then((result) => {
-      result.forEach((item, index) => {
-        fzf.stdinWrite(`[${index}] ${item.title}`);
-      });
-      fzf.stdinClose();
-    });
-
-  return new Promise((resolve, reject) => {
-    fzf.on('exit', (_, stdout) => {
-      stdout ? resolve(stdout) : reject();
-    });
-  })
-    .then((stdout) => {
-      stdout = stdout.split('\n');
-      const resolvedStdout = { keyInput: stdout[0], selectedItem: stdout[1] };
-
-      switch (resolvedStdout.keyInput) {
-        case 'ctrl-n':
-          currentPageNum += 1;
-          return fzfInterface();
-        case 'ctrl-p':
-          if (currentPageNum > 1) currentPageNum -= 1;
-          return fzfInterface();
-      }
-      return resolvedStdout;
-    });
-}
-
-fzfInterface()
-  .catch(() => {
-    // fzf exited with empty stdout
-    process.exit(1);
-  })
-  .then((resolvedStdout) => {
-    const searchResult = search.savedResults[currentPageNum];
-    const index = resolvedStdout.selectedItem.match(/^\[(\d+)\]/)[1];
-    console.log(searchResult[index].url);
-  });
+new Fzsearch(argv);
